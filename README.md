@@ -33,7 +33,7 @@ Install Python 3.12+, then run:
     python -m pip install -r requirements.txt
     python bot.py
 
-On Windows PowerShell, activate with .venv\\Scripts\\Activate.ps1. Set DISCORD_TOKEN and optionally GEMINI_API_KEY in your environment first. GEMINI_MODEL is optional (default: gemini-2.5-flash).
+On Windows PowerShell, activate with .venv\\Scripts\\Activate.ps1. Set DISCORD_TOKEN and optionally GEMINI_API_KEY in your environment first. GEMINI_MODEL is optional (default: gemini-3.8-flash).
 
 ## Limitations
 
