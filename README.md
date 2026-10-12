@@ -34,7 +34,7 @@ Install Python 3.12+, then run:
     python -m pip install -r requirements.txt
     python bot.py
 
-On Windows PowerShell, activate with .venv\\Scripts\\Activate.ps1. Set DISCORD_TOKEN and optionally GEMINI_API_KEY in your environment first. Optional Gemini settings: GEMINI_MODEL (default: gemini-3.8-flash), GEMINI_TIMEOUT_MS (default: 30000), and GEMINI_MAX_OUTPUT_TOKENS (default: 700). Lower output-token limits can reduce response time but also shorten answers.
+On Windows PowerShell, activate with .venv\\Scripts\\Activate.ps1. Set DISCORD_TOKEN and optionally GEMINI_API_KEY in your environment first. Optional Gemini settings: GEMINI_MODEL (default: gemini-3.8-flash), GEMINI_TIMEOUT_MS (default: 15000), and GEMINI_MAX_OUTPUT_TOKENS (default: 700). Lower output-token limits can reduce response time but also shorten answers. Gemini calls use a 15-second request timeout by default and one quick retry for temporary server errors/timeouts, rather than the SDK's long retry backoff.
 
 ## Limitations
 
