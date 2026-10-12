@@ -15,7 +15,7 @@ from google.genai import types
 TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-GEMINI_TIMEOUT_MS = int(os.getenv("GEMINI_TIMEOUT_MS", "30000"))
+GEMINI_TIMEOUT_MS = int(os.getenv("GEMINI_TIMEOUT_MS", "15000"))
 GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "700"))
 READY_FILE = os.getenv("BOT_READY_FILE")
 logging.basicConfig(
@@ -33,14 +33,14 @@ gemini_client = (
         api_key=GEMINI_API_KEY,
         http_options=types.HttpOptions(
             timeout=GEMINI_TIMEOUT_MS,
-            # Google's SDK defaults to as many as five attempts with long backoff.
-            # Two attempts keeps recovery from brief 503s while avoiding long stalls.
+            # Disable the SDK's long automatic backoff; ask_gemini owns a
+            # single quick retry below so failures cannot stall for minutes.
             retry_options=types.HttpRetryOptions(
-                attempts=2,
-                initial_delay=0.25,
-                max_delay=1.0,
+                attempts=1,
+                initial_delay=0.1,
+                max_delay=0.2,
                 exp_base=2.0,
-                jitter=0.1,
+                jitter=0.0,
                 http_status_codes=[408, 429, 500, 502, 503, 504],
             ),
         ),
@@ -145,15 +145,40 @@ async def ask_gemini(prompt, history=None, character_prompt=None):
             generation_config={"max_output_tokens": GEMINI_MAX_OUTPUT_TOKENS},
         )
 
-    try:
-        response = await asyncio.to_thread(generate)
-    except Exception as exc:
-        logger.error(
-            "Gemini interaction call raised after %.2fs (model=%s)",
-            time.monotonic() - request_started, GEMINI_MODEL,
-        )
-        log_gemini_error(exc)
-        raise
+    response = None
+    for attempt in range(1, 3):
+        attempt_started = time.monotonic()
+        try:
+            response = await asyncio.to_thread(generate)
+            if attempt > 1:
+                logger.info("Gemini quick retry succeeded on attempt %d", attempt)
+            break
+        except Exception as exc:
+            status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+            detail = str(exc).lower()
+            retryable_status = status in (408, 429, 500, 502, 503, 504)
+            retryable_timeout = (
+                "timeout" in type(exc).__name__.lower()
+                or "timed out" in detail
+                or isinstance(exc, TimeoutError)
+            )
+            if attempt == 1 and (retryable_status or retryable_timeout):
+                logger.warning(
+                    "Gemini transient failure; retrying once quickly: status=%s exception_type=%s attempt_seconds=%.2f",
+                    status, type(exc).__name__, time.monotonic() - attempt_started,
+                )
+                await asyncio.sleep(0.4)
+                continue
+
+            logger.error(
+                "Gemini interaction call failed after %.2fs total (model=%s attempts=%d)",
+                time.monotonic() - request_started, GEMINI_MODEL, attempt,
+            )
+            log_gemini_error(exc)
+            raise
+
+    if response is None:
+        raise RuntimeError("Gemini did not return a response after the retry.")
 
     answer = (response.output_text or "").strip()
     logger.info(
