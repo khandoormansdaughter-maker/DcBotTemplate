@@ -126,16 +126,39 @@ jobs:
           handoff_after=$((330 * 60))
           hard_stop_after=$((342 * 60))
           now="$(date +%s)"
+          bot_log="$RUNNER_TEMP/bot.log"
+          log_line=0
 
-          # Keep this runner serving while it waits; dispatch the next one at 5h30.
+          echo "Live bot logging enabled; new bot.log lines will be streamed here every 30 seconds."
+          if [[ -f "$bot_log" ]]; then
+            tail -n 80 "$bot_log" || true
+            log_line="$(wc -l < "$bot_log")"
+          fi
+
+          # Keep this runner serving while it waits; stream new bot output into
+          # the Actions log so errors during the long-running handoff are visible.
           while (( now - started_at < handoff_after )); do
             if ! kill -0 "$bot_pid" 2>/dev/null; then
               echo "Bot process exited unexpectedly before handoff."
-              tail -n 80 "$RUNNER_TEMP/bot.log" || true
+              tail -n 120 "$bot_log" || true
               exit 1
             fi
+
             sleep 30
             now="$(date +%s)"
+
+            if [[ -f "$bot_log" ]]; then
+              current_line="$(wc -l < "$bot_log")"
+              if (( current_line > log_line )); then
+                echo "----- New bot.log output (lines $((log_line + 1))-$current_line) -----"
+                tail -n +"$((log_line + 1))" "$bot_log" || true
+                log_line="$current_line"
+              else
+                echo "Bot heartbeat: process alive; no new application log lines."
+              fi
+            else
+              echo "Warning: bot log file is missing: $bot_log"
+            fi
           done
 
           ready=false
