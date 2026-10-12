@@ -283,7 +283,7 @@ def _parse_server_action(guild, content, bot_user_id):
     match = re.search(r"\b(?:send|put|route)\s+(?:your\s+)?(?:replies|responses|answers)\s+(?:in|to|into)\s+(<#\d+>)", text, re.I)
     if match:
         channel = _channel_from_token(guild, match.group(1))
-        if isinstance(channel, (discord.TextChannel, discord.Thread, discord.ForumChannel)):
+        if isinstance(channel, (discord.TextChannel, discord.Thread)):
             return {"kind": "set_reply_channel", "channel_id": channel.id,
                     "summary": f"Send future replies in **{channel.name}**"}
 
@@ -354,8 +354,9 @@ async def _apply_server_action(guild, action):
         channel = guild.get_channel(action["channel_id"])
         if not isinstance(channel, discord.ForumChannel):
             raise ValueError("That forum channel no longer exists.")
-        if not channel.permissions_for(me).send_messages:
-            raise PermissionError("I cannot post in that forum.")
+        forum_permissions = channel.permissions_for(me)
+        if not forum_permissions.send_messages or not forum_permissions.create_public_threads:
+            raise PermissionError("I need Send Messages and Create Public Threads in that forum.")
         created = await channel.create_thread(
             name=action["title"], content=action["body"],
             reason="Confirmed forum-post request",
