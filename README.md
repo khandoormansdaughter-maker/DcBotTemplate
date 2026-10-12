@@ -48,7 +48,7 @@ The `BOT_READY_FILE` environment variable is optional and is only used by the wo
 
 1. A runner starts the bot and waits for Discord's `on_ready` event.
 2. At 5 hours 30 minutes after readiness, it dispatches a replacement run.
-3. The replacement starts its bot and uploads a `bot-ready` artifact only after its own `on_ready` event.
+3. The replacement starts its bot, confirms it stays alive for a short stability window after its own `on_ready` event, then uploads a `bot-ready` artifact.
 4. The old runner polls the replacement run and artifact. It stops its bot only after that readiness marker exists, so the new connection is established before the old one is shut down.
 5. If a replacement fails before becoming ready, the old runner tries again. A safety deadline stops the old process at about 5 hours 42 minutes, leaving margin under GitHub's job timeout.
 6. A scheduled check runs every 30 minutes. It exits if another runner is active and can start a new root run if the handoff chain has stopped.
