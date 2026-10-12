@@ -7,22 +7,7 @@ from discord import app_commands
 TOKEN = os.getenv("DISCORD_TOKEN")
 READY_FILE = os.getenv("BOT_READY_FILE")
 
-def extract_intent(text):
-    rules = [
-        ("create_forum", r"\b(?:create|make|add)\s+(?:a\s+)?forum\s+(?:named|called)\s+[\"']?([\w -]+?)[\"']?(?=\s+(?:please|thanks|thank you)\b|[.!?,;]|$)", True),
-        ("create_thread", r"\b(?:create|make|start|open)\s+(?:a\s+)?thread\s+(?:named|called)\s+[\"']?([\w -]+?)[\"']?(?=\s+(?:please|thanks|thank you)\b|[.!?,;]|$)", False),
-        ("create_role", r"\b(?:create|make|add)\s+(?:a\s+)?role\s+(?:named|called)\s+[\"']?([\w -]+?)[\"']?(?=\s+(?:please|thanks|thank you)\b|[.!?,;]|$)", False),
-        ("create_text_channel", r"\b(?:create|make|add)\s+(?:a\s+)?(?:text\s+)?channel\s+(?:named|called)\s+[\"']?([\w -]+?)[\"']?(?=\s+(?:please|thanks|thank you)\b|[.!?,;]|$)", True),
-    ]
-    for action, pattern, slug in rules:
-        match = re.search(pattern, text, re.I)
-        if match:
-            name = re.sub(r"\s+", " ", match.group(1)).strip(" \"'")
-            if slug:
-                name = re.sub(r"\s+", "-", name).lower()
-            if name:
-                return action, name[:100]
-    return None
+from intent_parser import extract_intent, normalize
 
 class SllBot(discord.Client):
     def __init__(self):
