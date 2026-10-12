@@ -259,9 +259,9 @@ async def ask_command(interaction: discord.Interaction, question: str):
     )
     await interaction.response.defer(thinking=True)
     try:
-        await send_answer(interaction.channel, question, interaction.channel_id, interaction.user.id)
-        # send_answer posts to the channel; the interaction acknowledgement is deferred above.
-        await interaction.followup.send("Done.", ephemeral=True)
+        answer = await ask_gemini(question, histories[key], character_prompts.get(key))
+        for chunk in split_message(answer):
+            await interaction.followup.send(chunk)
     except RuntimeError as exc:
         await interaction.followup.send(str(exc), ephemeral=True)
     except Exception as exc:
