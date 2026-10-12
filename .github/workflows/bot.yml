@@ -1,0 +1,61 @@
+name: Run Discord bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub scheduled workflows use UTC. Starts at 00:00, 06:00, 12:00,
+    # and 18:00 UTC. GitHub may delay scheduled runs during busy periods.
+    - cron: "0 0,6,12,18 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-bot-runtime
+  cancel-in-progress: false
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run bot for up to 5 hours 50 minutes
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: |
+          python -u -c '
+          import os
+          import subprocess
+          import sys
+          import time
+
+          deadline = time.monotonic() + 5 * 60 * 60 + 50 * 60
+          while time.monotonic() < deadline:
+              remaining = max(1, int(deadline - time.monotonic()))
+              result = subprocess.run(
+                  [sys.executable, "-u", "bot.py"],
+                  timeout=remaining,
+                  check=False,
+                  env=os.environ.copy(),
+              )
+              if time.monotonic() >= deadline:
+                  break
+              print(
+                  f"Bot process exited with code {result.returncode}; "
+                  "restarting in 10 seconds.",
+                  flush=True,
+              )
+              time.sleep(min(10, max(0, deadline - time.monotonic())))
+          '
