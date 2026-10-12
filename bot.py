@@ -44,27 +44,50 @@ def split_message(text, limit=1900):
     return [text[i:i + limit] for i in range(0, len(text), limit)]
 
 
+def log_gemini_error(exc):
+    """Print actionable, redacted Gemini diagnostics for GitHub Actions logs."""
+    detail = str(exc)
+    if GEMINI_API_KEY:
+        detail = detail.replace(GEMINI_API_KEY, "[REDACTED]")
+    status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    print(
+        f"Gemini API request failed: type={type(exc).__name__}, "
+        f"status={status}, detail={detail}",
+        flush=True,
+    )
+    lower = detail.lower()
+    if status in (401, 403) or "unauthenticated" in lower or "permission_denied" in lower or "invalid api key" in lower:
+        return "Gemini rejected the API key or its permissions. Verify GEMINI_API_KEY in GitHub Actions secrets and that the key is enabled for the Gemini API."
+    if status == 429 or "resource_exhausted" in lower or "quota" in lower:
+        return "Gemini quota or rate limit reached. Check the API quota for this key, then try again."
+    if status == 404 or "not_found" in lower or ("model" in lower and "not found" in lower):
+        return f"Gemini model {GEMINI_MODEL!r} is unavailable. Check the GEMINI_MODEL setting."
+    if isinstance(status, int) and status >= 500:
+        return "Gemini is temporarily having a server-side problem. Please try again shortly."
+    return "Gemini request failed. Check the latest GitHub Actions log for the redacted API error details."
+
+
 async def ask_gemini(prompt, history=None):
     if gemini_client is None:
         raise RuntimeError(
             "Gemini isn't configured. Add GEMINI_API_KEY under repository Settings → "
             "Secrets and variables → Actions, then restart the workflow."
         )
-    contents = [
-        {"role": role, "parts": [{"text": content}]}
-        for role, content in (history or [])
-    ]
-    contents.append({"role": "user", "parts": [{"text": prompt}]})
 
+    # Use Google's Interactions API, matching the current official Python example.
     def generate():
-        return gemini_client.models.generate_content(
+        return gemini_client.interactions.create(
             model=GEMINI_MODEL,
-            contents=contents,
-            config={"system_instruction": SYSTEM_INSTRUCTION},
+            input=f"{SYSTEM_INSTRUCTION}\n\nConversation so far:\n" +
+                  "\n".join(
+                      f"{'User' if role == 'user' else 'Assistant'}: {content}"
+                      for role, content in (history or [])
+                  ) +
+                  f"\n\nUser: {prompt}\nAssistant:",
         )
 
     response = await asyncio.to_thread(generate)
-    answer = (response.text or "").strip()
+    answer = (response.output_text or "").strip()
     if not answer:
         answer = "Gemini returned an empty response. Try asking another way."
     if history is not None:
@@ -105,8 +128,8 @@ async def on_message(message):
     except RuntimeError as exc:
         await message.reply(str(exc), mention_author=False)
     except Exception as exc:
-        print(f"Gemini request failed ({type(exc).__name__}): {exc}")
-        await message.reply("I couldn't reach Gemini. Check the bot logs and API key, then try again.", mention_author=False)
+        error_message = log_gemini_error(exc)
+        await message.reply(error_message, mention_author=False)
 
 
 @bot.tree.command(name="ping", description="Check whether the bot is responsive.")
@@ -126,8 +149,8 @@ async def prompt_command(interaction: discord.Interaction, prompt: str):
     except RuntimeError as exc:
         await interaction.followup.send(str(exc), ephemeral=True)
     except Exception as exc:
-        print(f"Gemini request failed ({type(exc).__name__}): {exc}")
-        await interaction.followup.send("I couldn't reach Gemini. Check the bot logs and API key, then try again.", ephemeral=True)
+        error_message = log_gemini_error(exc)
+        await interaction.followup.send(error_message, ephemeral=True)
 
 
 if __name__ == "__main__":
