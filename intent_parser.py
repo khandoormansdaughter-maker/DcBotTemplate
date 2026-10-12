@@ -9,23 +9,21 @@ ALIASES = {
     "role": ("role", "server role", "member role"),
 }
 
-FILLER = re.compile(r"\\b(?:hey|hi|hello|please|pls|plz|thanks|thank you|for me|if you can|if possible|when you get a chance|when you can|would you|could you|can you|will you|doll)\\b", re.I)
-
 
 def normalize(text: str) -> str:
     text = text.replace("’", "'").replace("“", '"').replace("”", '"')
-    text = re.sub(r"\\b(?:wanna)\\b", "want to", text, flags=re.I)
-    text = re.sub(r"\\b(?:gonna)\\b", "going to", text, flags=re.I)
-    return re.sub(r"\\s+", " ", text).strip()
+    text = re.sub(r"\b(?:wanna)\b", "want to", text, flags=re.I)
+    text = re.sub(r"\b(?:gonna)\b", "going to", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _clean_name(value: str, slug: bool = False):
-    name = value.strip().strip('"\\'').strip().rstrip(".,!?;")
+    name = value.strip().strip('"').strip("'").strip().rstrip(".,!?;")
     if not name or len(name) > 100:
         return None
     if slug:
-        name = re.sub(r"[^\\w -]", "", name)
-        name = re.sub(r"\\s+", "-", name).strip("-").lower()
+        name = re.sub(r"[^\w -]", "", name)
+        name = re.sub(r"\s+", "-", name).strip("-").lower()
     return name or None
 
 
@@ -33,10 +31,10 @@ def extract_intent(raw_text: str):
     """Parse one supported action, preserving the original single-action API."""
     text = normalize(raw_text)
     actions = [
-        ("create_forum", r"\\b(?:create|make|add|set up|setup|open|spin up|put together)\\s+(?:me\\s+)?(?:a\\s+)?forum(?:\\s+channel)?\\s+(?:named|called|titled)\\s+(.+?)\\s*(?:please|pls|thanks|thank you)?[.!?,;]*$", True),
-        ("create_thread", r"\\b(?:create|make|start|open|spin up|set up)\\s+(?:me\\s+)?(?:a\\s+)?thread\\s+(?:named|called|titled)\\s+(.+?)\\s*(?:please|pls|thanks|thank you)?[.!?,;]*$", False),
-        ("create_role", r"\\b(?:create|make|add|set up)\\s+(?:me\\s+)?(?:a\\s+)?role\\s+(?:named|called|titled)\\s+(.+?)\\s*(?:please|pls|thanks|thank you)?[.!?,;]*$", False),
-        ("create_text_channel", r"\\b(?:create|make|add|set up|setup|open)\\s+(?:me\\s+)?(?:a\\s+)?(?:text\\s+|chat\\s+)?channel\\s+(?:named|called|titled)\\s+(.+?)\\s*(?:please|pls|thanks|thank you)?[.!?,;]*$", True),
+        ("create_forum", r"\b(?:create|make|add|set up|setup|open|spin up|put together)\s+(?:me\s+)?(?:a\s+)?forum(?:\s+channel)?\s+(?:named|called|titled)\s+(.+?)\s*(?:please|pls|thanks|thank you)?[.!?,;]*$", True),
+        ("create_thread", r"\b(?:create|make|start|open|spin up|set up)\s+(?:me\s+)?(?:a\s+)?thread\s+(?:named|called|titled)\s+(.+?)\s*(?:please|pls|thanks|thank you)?[.!?,;]*$", False),
+        ("create_role", r"\b(?:create|make|add|set up)\s+(?:me\s+)?(?:a\s+)?role\s+(?:named|called|titled)\s+(.+?)\s*(?:please|pls|thanks|thank you)?[.!?,;]*$", False),
+        ("create_text_channel", r"\b(?:create|make|add|set up|setup|open)\s+(?:me\s+)?(?:a\s+)?(?:text\s+|chat\s+)?channel\s+(?:named|called|titled)\s+(.+?)\s*(?:please|pls|thanks|thank you)?[.!?,;]*$", True),
     ]
     for action, pattern, slug in actions:
         match = re.search(pattern, text, re.I)
@@ -52,23 +50,17 @@ def extract_intents(raw_text: str):
     """Return ordered actions for a message, including forum creation followed by a post."""
     text = normalize(raw_text)
 
-    # Example: create a forum named "example" and make a post in it
-    # titled "hello world" with a message saying "hi".
     forum_match = re.search(
-        r'\\b(?:create|make|add|set up|setup|open|spin up|put together)\\s+(?:me\\s+)?(?:a\\s+)?forum(?:\\s+channel)?\\s+(?:named|called|titled)\\s+'
-        r'(?:"([^"]+)"|\'([^\']+)\'|(.+?))'
-        r'(?=\\s+and\\s+(?:make|create|add)\\s+(?:a\\s+)?post\\b|[.!?]*$)',
+        r"""\b(?:create|make|add|set up|setup|open|spin up|put together)\s+(?:me\s+)?(?:a\s+)?forum(?:\s+channel)?\s+(?:named|called|titled)\s+(?:"([^"]+)"|'([^']+)'|(.+?))(?=\s+and\s+(?:make|create|add)\s+(?:a\s+)?post\b|[.!?]*$)""",
         text, re.I,
     )
     post_match = re.search(
-        r'\\b(?:make|create|add)\\s+(?:me\\s+)?(?:a\\s+)?post\\s+(?:in\\s+(?:it|that\\s+forum|the\\s+forum)\\s+)?'
-        r'(?:titled|named|called)\\s+(?:"([^"]+)"|\'([^\']+)\'|(.+?))'
-        r'\\s+with\\s+(?:a\\s+)?message\\s+saying\\s+(?:"([^"]*)"|\'([^\']*)\'|(.+?))[.!?]*$',
+        r"""\b(?:make|create|add)\s+(?:me\s+)?(?:a\s+)?post\s+(?:in\s+(?:it|that\s+forum|the\s+forum)\s+)?(?:titled|named|called)\s+(?:"([^"]+)"|'([^']+)'|(.+?))\s+with\s+(?:a\s+)?message\s+saying\s+(?:"([^"]*)"|'([^']*)'|(.+?))[.!?]*$""",
         text, re.I,
     )
     if forum_match and post_match:
         forum_name = _clean_name(next(group for group in forum_match.groups() if group is not None), slug=True)
-        title = _clean_name(next(group for group in post_match.groups()[:3] if group is not None), slug=False)
+        title = _clean_name(next(group for group in post_match.groups()[:3] if group is not None))
         body = next(group for group in post_match.groups()[3:] if group is not None).strip().rstrip(".,!?;")
         if forum_name and title and body and len(body) <= 2000:
             return [("create_forum", forum_name), ("create_forum_post", forum_name, title, body)]
