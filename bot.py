@@ -10,7 +10,7 @@ from google import genai
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 READY_FILE = os.getenv("BOT_READY_FILE")
 SYSTEM_INSTRUCTION = "You are a helpful, friendly, concise assistant chatting in a Discord server."
 histories = defaultdict(lambda: deque(maxlen=12))
@@ -34,7 +34,7 @@ bot = TemplateBot()
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    print("Gemini chat enabled." if gemini_client else "Gemini disabled: set GEMINI_API_KEY.")
+    print(f"Gemini chat enabled (model: {GEMINI_MODEL})." if gemini_client else "Gemini disabled: set GEMINI_API_KEY.")
     if READY_FILE:
         Path(READY_FILE).write_text("ready\n", encoding="utf-8")
 
