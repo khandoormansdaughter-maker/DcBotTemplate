@@ -1,11 +1,13 @@
 """Minimal Discord bot template with a /ping slash command."""
 import os
+from pathlib import Path
 
 import discord
 from discord import app_commands
 
 
 TOKEN = os.getenv("DISCORD_TOKEN")
+READY_FILE = os.getenv("BOT_READY_FILE")
 
 
 class TemplateBot(discord.Client):
@@ -26,6 +28,10 @@ bot = TemplateBot()
 @bot.event
 async def on_ready() -> None:
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    # GitHub Actions uses this marker to confirm a replacement runner is
+    # connected before the previous runner shuts down.
+    if READY_FILE:
+        Path(READY_FILE).write_text("ready\n", encoding="utf-8")
 
 
 @bot.tree.command(name="ping", description="Check whether the bot is responsive.")
