@@ -5,9 +5,10 @@ A Python Discord bot template with optional Gemini AI chat.
 ## Features
 
 - /ping checks latency.
-- /prompt lets users ask Gemini questions.
-- Mention the bot with a question or reply to one of its messages to chat.
-- Short per-channel, per-user conversation history (in memory; resets on restart).
+- /prompt sets a per-user, per-channel character/persona instruction for Gemini.
+- /ask sends a question using your current character prompt.
+- Mention the bot with a question or reply to one of its messages to chat in character.
+- Short per-channel, per-user conversation history and character prompts are kept in memory; both reset on restart.
 - GitHub Actions startup and best-effort runner handoff/recovery.
 
 ## Setup
@@ -20,7 +21,7 @@ A Python Discord bot template with optional Gemini AI chat.
    - GEMINI_API_KEY: Gemini API key from https://aistudio.google.com/apikey
    - BOT_WORKFLOW_TOKEN: fine-grained PAT limited to this repository with Actions: Read and write permission, for workflow handoff/recovery.
 5. Never commit or share tokens/API keys. Store them only as secrets or environment variables.
-6. Open Actions → Run Discord bot → Run workflow. Try /ping, /prompt, or mention the bot in a channel.
+6. Open Actions → Run Discord bot → Run workflow. Try /ping, use /prompt to set a character (for example, “You are a cheerful space explorer who explains things simply”), then use /ask or mention/reply to chat.
 
 Gemini is optional. Without GEMINI_API_KEY, the bot starts and /ping works, but AI requests explain how to configure the key. The key is read at startup, so restart the workflow after adding/changing it.
 
@@ -33,7 +34,7 @@ Install Python 3.12+, then run:
     python -m pip install -r requirements.txt
     python bot.py
 
-On Windows PowerShell, activate with .venv\\Scripts\\Activate.ps1. Set DISCORD_TOKEN and optionally GEMINI_API_KEY in your environment first. GEMINI_MODEL is optional (default: gemini-3.8-flash).
+On Windows PowerShell, activate with .venv\\Scripts\\Activate.ps1. Set DISCORD_TOKEN and optionally GEMINI_API_KEY in your environment first. Optional Gemini settings: GEMINI_MODEL (default: gemini-3.8-flash), GEMINI_TIMEOUT_MS (default: 30000), and GEMINI_MAX_OUTPUT_TOKENS (default: 700). Lower output-token limits can reduce response time but also shorten answers.
 
 ## Limitations
 
@@ -41,6 +42,6 @@ The runner handoff is best-effort, not guaranteed 24/7 hosting. GitHub may delay
 
 ## Project layout
 
-- bot.py — Discord client, Gemini chat, /ping, and /prompt
+- bot.py — Discord client, Gemini chat, /ping, /prompt, and /ask
 - requirements.txt — Python dependencies
 - .github/workflows/bot.yml — runner startup, handoff, and recovery
