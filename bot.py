@@ -1,6 +1,9 @@
 """Discord bot with optional Gemini-powered chat."""
 import asyncio
 import os
+import logging
+import time
+import traceback
 from collections import defaultdict, deque
 from pathlib import Path
 
@@ -12,6 +15,11 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 READY_FILE = os.getenv("BOT_READY_FILE")
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("dollapp")
 SYSTEM_INSTRUCTION = "You are a helpful, friendly, concise assistant chatting in a Discord server."
 histories = defaultdict(lambda: deque(maxlen=12))
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
@@ -33,8 +41,13 @@ bot = TemplateBot()
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    print(f"Gemini chat enabled (model: {GEMINI_MODEL})." if gemini_client else "Gemini disabled: set GEMINI_API_KEY.")
+    logger.info("Discord ready: user_id=%s", bot.user.id)
+    logger.info(
+        "Gemini configuration: client_initialized=%s api_key_present=%s model=%s",
+        gemini_client is not None,
+        bool(GEMINI_API_KEY),
+        GEMINI_MODEL,
+    )
     if READY_FILE:
         Path(READY_FILE).write_text("ready\n", encoding="utf-8")
 
@@ -50,10 +63,13 @@ def log_gemini_error(exc):
     if GEMINI_API_KEY:
         detail = detail.replace(GEMINI_API_KEY, "[REDACTED]")
     status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
-    print(
-        f"Gemini API request failed: type={type(exc).__name__}, "
-        f"status={status}, detail={detail}",
-        flush=True,
+    # Include traceback for diagnosis, while redacting the secret from all logged text.
+    trace = traceback.format_exc()
+    if GEMINI_API_KEY:
+        trace = trace.replace(GEMINI_API_KEY, "[REDACTED]")
+    logger.error(
+        "Gemini API request failed: exception_type=%s status=%s detail=%s\\n%s",
+        type(exc).__name__, status, detail, trace,
     )
     lower = detail.lower()
     if status in (401, 403) or "unauthenticated" in lower or "permission_denied" in lower or "invalid api key" in lower:
@@ -74,6 +90,12 @@ async def ask_gemini(prompt, history=None):
             "Secrets and variables → Actions, then restart the workflow."
         )
 
+    request_started = time.monotonic()
+    logger.info(
+        "Gemini request starting: model=%s history_turns=%d prompt_chars=%d",
+        GEMINI_MODEL, len(history or []), len(prompt),
+    )
+
     # Use Google's Interactions API, matching the current official Python example.
     def generate():
         return gemini_client.interactions.create(
@@ -86,9 +108,22 @@ async def ask_gemini(prompt, history=None):
                   f"\n\nUser: {prompt}\nAssistant:",
         )
 
-    response = await asyncio.to_thread(generate)
+    try:
+        response = await asyncio.to_thread(generate)
+    except Exception:
+        logger.exception(
+            "Gemini interaction call raised after %.2fs (model=%s)",
+            time.monotonic() - request_started, GEMINI_MODEL,
+        )
+        raise
+
     answer = (response.output_text or "").strip()
+    logger.info(
+        "Gemini request completed: elapsed_seconds=%.2f output_chars=%d output_present=%s",
+        time.monotonic() - request_started, len(answer), bool(answer),
+    )
     if not answer:
+        logger.warning("Gemini returned an empty output_text; response_type=%s", type(response).__name__)
         answer = "Gemini returned an empty response. Try asking another way."
     if history is not None:
         history.append(("user", prompt))
@@ -113,6 +148,10 @@ async def on_message(message):
     if not (mentioned or replying_to_bot):
         return
 
+    logger.info(
+        "Discord chat trigger: message_id=%s channel_id=%s author_id=%s mentioned=%s reply_to_bot=%s",
+        message.id, message.channel.id, message.author.id, mentioned, replying_to_bot,
+    )
     prompt = message.content.replace(f"<@{bot.user.id}>", "")
     prompt = prompt.replace(f"<@!{bot.user.id}>", "").strip()
     if not prompt:
@@ -123,9 +162,12 @@ async def on_message(message):
     try:
         async with message.channel.typing():
             answer = await ask_gemini(prompt, history)
-        for chunk in split_message(answer):
+        chunks = split_message(answer)
+        logger.info("Sending Gemini response to Discord: message_id=%s chunks=%d", message.id, len(chunks))
+        for chunk in chunks:
             await message.reply(chunk, mention_author=False)
     except RuntimeError as exc:
+        logger.error("Gemini unavailable for Discord message %s: %s", message.id, exc)
         await message.reply(str(exc), mention_author=False)
     except Exception as exc:
         error_message = log_gemini_error(exc)
@@ -140,6 +182,10 @@ async def ping(interaction: discord.Interaction):
 @bot.tree.command(name="prompt", description="Ask Gemini a question.")
 @app_commands.describe(prompt="What you want to ask Gemini")
 async def prompt_command(interaction: discord.Interaction, prompt: str):
+    logger.info(
+        "Discord /prompt invoked: interaction_id=%s channel_id=%s user_id=%s prompt_chars=%d",
+        interaction.id, interaction.channel_id, interaction.user.id, len(prompt),
+    )
     await interaction.response.defer(thinking=True)
     history = histories[(interaction.channel_id or 0, interaction.user.id)]
     try:
@@ -154,6 +200,14 @@ async def prompt_command(interaction: discord.Interaction, prompt: str):
 
 
 if __name__ == "__main__":
+    logger.info(
+        "Starting DollAPP: discord_token_present=%s gemini_api_key_present=%s model=%s log_level=%s",
+        bool(TOKEN), bool(GEMINI_API_KEY), GEMINI_MODEL, logging.getLevelName(logger.getEffectiveLevel()),
+    )
     if not TOKEN:
         raise RuntimeError("DISCORD_TOKEN is missing; set it as a repository secret or environment variable.")
-    bot.run(TOKEN)
+    try:
+        bot.run(TOKEN)
+    except Exception:
+        logger.exception("Discord bot process exited with an exception")
+        raise
