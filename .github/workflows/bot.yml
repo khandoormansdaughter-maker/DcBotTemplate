@@ -61,6 +61,7 @@ jobs:
         if: ${{ inputs.handoff_id != '' || steps.guard.outputs.should_run == 'true' }}
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BOT_READY_FILE: ${{ runner.temp }}/bot-ready
         run: |
           set -euo pipefail
