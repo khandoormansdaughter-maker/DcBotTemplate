@@ -110,8 +110,9 @@ async def ask_gemini(prompt, history=None):
 
     try:
         response = await asyncio.to_thread(generate)
-    except Exception:
-        logger.exception(
+    except Exception as exc:
+        log_gemini_error(exc)
+        logger.error(
             "Gemini interaction call raised after %.2fs (model=%s)",
             time.monotonic() - request_started, GEMINI_MODEL,
         )
