@@ -72,6 +72,16 @@ jobs:
 
           for _ in $(seq 1 120); do
             if [[ -f "$BOT_READY_FILE" ]]; then
+              # Require a short stable window so a flapping startup is not
+              # advertised as ready to the previous runner.
+              for _ in $(seq 1 10); do
+                if ! kill -0 "$bot_pid" 2>/dev/null; then
+                  cat "$RUNNER_TEMP/bot.log"
+                  echo "Bot exited during the readiness stability check."
+                  exit 1
+                fi
+                sleep 1
+              done
               date +%s > "$RUNNER_TEMP/bot-started-at"
               echo "started=true" >> "$GITHUB_OUTPUT"
               cat "$RUNNER_TEMP/bot.log"
