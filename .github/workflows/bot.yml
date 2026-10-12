@@ -1,21 +1,25 @@
 name: Run Discord bot
+run-name: DollAPP handoff ${{ inputs.handoff_id || 'root' }}
 
 on:
   workflow_dispatch:
+    inputs:
+      handoff_id:
+        description: Internal handoff identifier (leave blank for a normal start)
+        required: false
+        type: string
+        default: ""
   schedule:
-    # GitHub scheduled workflows use UTC and can be delayed during busy periods.
-    - cron: "0 0,6,12,18 * * *"
+    # Recovery check: starts a root runner only when no runner chain is active.
+    - cron: "*/30 * * * *"
 
 permissions:
   contents: read
 
-concurrency:
-  group: discord-bot-runtime
-  cancel-in-progress: false
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    # Leave room for startup, handoff retries, and cleanup under the 6-hour cap.
     timeout-minutes: 350
     steps:
       - name: Check out repository
@@ -30,22 +34,176 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Run bot for up to 5 hours 45 minutes
+      - name: Avoid starting a duplicate root runner
+        id: guard
+        if: ${{ inputs.handoff_id == '' }}
+        env:
+          GH_TOKEN: ${{ secrets.BOT_WORKFLOW_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "BOT_WORKFLOW_TOKEN is required for runner coordination."
+            exit 1
+          fi
+
+          active_runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/bot.yml/runs?per_page=100" \
+            --jq "[.workflow_runs[] | select((.id | tostring) != \"$GITHUB_RUN_ID\" and (.status == \"queued\" or .status == \"in_progress\" or .status == \"waiting\"))] | length")"
+
+          if [[ "$active_runs" -gt 0 ]]; then
+            echo "Another runner is already active; this scheduled/manual root run will exit."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Start bot and wait for Discord readiness
+        id: start
+        if: ${{ inputs.handoff_id != '' || steps.guard.outputs.should_run == 'true' }}
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          BOT_READY_FILE: ${{ runner.temp }}/bot-ready
         run: |
-          python -u -c '
-          import os
-          import subprocess
-          import sys
+          set -euo pipefail
+          rm -f "$BOT_READY_FILE" "$RUNNER_TEMP/bot.pid" "$RUNNER_TEMP/bot-started-at"
 
-          try:
-              subprocess.run(
-                  [sys.executable, "-u", "bot.py"],
-                  timeout=5 * 60 * 60 + 45 * 60,
-                  check=True,
-                  env=os.environ.copy(),
-              )
-          except subprocess.TimeoutExpired:
-              print("Scheduled runtime window finished; ending this runner cleanly.")
-          '
+          nohup python -u bot.py > "$RUNNER_TEMP/bot.log" 2>&1 < /dev/null &
+          bot_pid=$!
+          echo "$bot_pid" > "$RUNNER_TEMP/bot.pid"
+
+          for _ in $(seq 1 120); do
+            if [[ -f "$BOT_READY_FILE" ]]; then
+              date +%s > "$RUNNER_TEMP/bot-started-at"
+              echo "started=true" >> "$GITHUB_OUTPUT"
+              cat "$RUNNER_TEMP/bot.log"
+              exit 0
+            fi
+            if ! kill -0 "$bot_pid" 2>/dev/null; then
+              cat "$RUNNER_TEMP/bot.log"
+              echo "Bot exited before connecting to Discord."
+              exit 1
+            fi
+            sleep 1
+          done
+
+          cat "$RUNNER_TEMP/bot.log"
+          kill -TERM "$bot_pid" 2>/dev/null || true
+          echo "Bot did not become ready within 120 seconds."
+          exit 1
+
+      - name: Publish readiness marker for the next runner
+        if: ${{ steps.start.outputs.started == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-ready
+          path: ${{ runner.temp }}/bot-ready
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Hand off to a replacement runner
+        if: ${{ steps.start.outputs.started == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.BOT_WORKFLOW_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "BOT_WORKFLOW_TOKEN is required to dispatch the replacement runner."
+            exit 1
+          fi
+
+          bot_pid="$(cat "$RUNNER_TEMP/bot.pid")"
+          started_at="$(cat "$RUNNER_TEMP/bot-started-at")"
+          handoff_after=$((330 * 60))
+          hard_stop_after=$((342 * 60))
+          now="$(date +%s)"
+
+          # Keep this runner serving while it waits; dispatch the next one at 5h30.
+          while (( now - started_at < handoff_after )); do
+            if ! kill -0 "$bot_pid" 2>/dev/null; then
+              echo "Bot process exited unexpectedly before handoff."
+              tail -n 80 "$RUNNER_TEMP/bot.log" || true
+              exit 1
+            fi
+            sleep 30
+            now="$(date +%s)"
+          done
+
+          ready=false
+          for attempt in 1 2 3; do
+            now="$(date +%s)"
+            if (( now - started_at >= hard_stop_after )); then
+              break
+            fi
+
+            handoff_id="$(python -c 'import uuid; print(uuid.uuid4().hex)')"
+            payload="$(jq -n --arg ref "$GITHUB_REF_NAME" --arg handoff_id "$handoff_id" \
+              '{ref: $ref, inputs: {handoff_id: $handoff_id}}')"
+
+            echo "Dispatching replacement runner (attempt $attempt)."
+            if ! printf '%s' "$payload" | gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/bot.yml/dispatches" --input - >/dev/null; then
+              echo "Dispatch request failed; keeping the current bot alive before retrying."
+              sleep 20
+              continue
+            fi
+
+            new_run_id=""
+            while [[ -z "$new_run_id" ]]; do
+              now="$(date +%s)"
+              if (( now - started_at >= hard_stop_after )); then
+                break
+              fi
+              new_run_id="$(gh api \
+                "repos/$GITHUB_REPOSITORY/actions/workflows/bot.yml/runs?event=workflow_dispatch&per_page=100" \
+                --jq ".workflow_runs[] | select(.display_title == \"DollAPP handoff $handoff_id\") | .id" 2>/dev/null | head -n 1 || true)"
+              [[ -n "$new_run_id" ]] || sleep 5
+            done
+
+            [[ -n "$new_run_id" ]] || break
+
+            while true; do
+              now="$(date +%s)"
+              if (( now - started_at >= hard_stop_after )); then
+                break
+              fi
+
+              artifact_count="$(gh api \
+                "repos/$GITHUB_REPOSITORY/actions/runs/$new_run_id/artifacts" \
+                --jq '[.artifacts[] | select(.name == "bot-ready" and .expired == false)] | length' 2>/dev/null || echo 0)"
+              if [[ "$artifact_count" == "1" ]]; then
+                echo "Replacement runner is connected to Discord; this runner can shut down."
+                ready=true
+                break
+              fi
+
+              run_status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$new_run_id" \
+                --jq '.status' 2>/dev/null || echo unknown)"
+              if [[ "$run_status" == "completed" ]]; then
+                echo "Replacement run completed without a readiness marker; trying again."
+                break
+              fi
+              sleep 15
+            done
+
+            [[ "$ready" == "true" ]] && break
+          done
+
+          if [[ "$ready" != "true" ]]; then
+            echo "No replacement became ready before the safety deadline."
+            echo "Stopping at 5h42 to stay within GitHub's runner limit; the scheduled recovery check can restart the bot."
+            exit 1
+          fi
+
+      - name: Stop this runner's bot process
+        if: ${{ always() && steps.start.outputs.started == 'true' }}
+        run: |
+          set +e
+          if [[ -f "$RUNNER_TEMP/bot.pid" ]]; then
+            bot_pid="$(cat "$RUNNER_TEMP/bot.pid")"
+            kill -TERM "$bot_pid" 2>/dev/null
+            for _ in $(seq 1 10); do
+              kill -0 "$bot_pid" 2>/dev/null || break
+              sleep 1
+            done
+            kill -KILL "$bot_pid" 2>/dev/null
+          fi
+          tail -n 40 "$RUNNER_TEMP/bot.log" 2>/dev/null || true
