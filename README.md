@@ -9,6 +9,20 @@ A Python Discord bot template with optional Gemini AI chat.
 - /ask sends a question using your current character prompt.
 - Mention the bot with a question or reply to one of its messages to chat in character.
 - Mention the bot with supported server-management requests to create text/voice/category/forum channels, create forum posts, create roles, move channels, restrict channel visibility to a role, route replies to a channel, kick/ban mentioned members, and assign/remove roles. Every change asks for confirmation and checks the requester's Discord permissions; Discord bot permissions and role hierarchy still apply.
+
+Example requests (mention the bot first):
+
+- `create a forum called suggestions`
+- `create a post in <#FORUM_CHANNEL_ID> titled "Feature idea": Let people vote on this idea`
+- `create a text channel called bot-chat`
+- `create a role called Helpers`
+- `move <#CHANNEL_ID> into category Community`
+- `restrict <#CHANNEL_ID> to <@&ROLE_ID>`
+- `send your replies in <#CHANNEL_ID>`
+- `kick <@MEMBER_ID>` or `ban <@MEMBER_ID>`
+- `assign <@MEMBER_ID> role <@&ROLE_ID>` or `remove <@&ROLE_ID> from <@MEMBER_ID>`
+
+Use actual Discord mentions for existing channels, roles, and members. The bot asks for confirmation before it changes anything. Forum-post creation is supported inside an existing forum channel.
 - Short per-channel, per-user conversation history and character prompts are kept in memory; both reset on restart.
 - GitHub Actions startup and best-effort runner handoff/recovery.
 
