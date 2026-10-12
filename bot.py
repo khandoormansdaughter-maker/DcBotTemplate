@@ -28,7 +28,7 @@ bot = SllBot()
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     if READY_FILE:
-        Path(READY_FILE).write_text("ready\\n", encoding="utf-8")
+        Path(READY_FILE).write_text("ready\n", encoding="utf-8")
 
 
 @bot.event
